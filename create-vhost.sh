@@ -4,7 +4,24 @@
 # APACHE VHOST CREATOR (FINAL VERSION)
 ############################################################
 
-CONFIG="/tmp/.env" # was "/tmp/data.txt"
+EXIT_OK=0
+EXIT_RUNTIME=1
+EXIT_USAGE=2
+EXIT_CONFIG=3
+
+info() { echo "[INFO] $1"; }
+warn() { echo "[WARN] $1"; }
+error() { echo "[ERROR] $1"; }
+ok() { echo "[OK] $1"; }
+
+GLOBAL_CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/files/config.conf"
+
+if [ ! -f "$GLOBAL_CONFIG" ]; then
+error "Global config not found: $GLOBAL_CONFIG"
+exit "$EXIT_CONFIG"
+fi
+
+source "$GLOBAL_CONFIG"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE="$SCRIPT_DIR/files/vhost-template.conf"
@@ -19,10 +36,10 @@ WEBROOT_BASE="/var/www"
 ############################################################
 
 if [ "$EUID" -ne 0 ]; then
-echo "[ERROR] Script must be run with sudo or root"
+error "Script must be run with sudo or root"
 echo "Example:"
 echo "sudo ./create-vhost.sh"
-exit 1
+exit "$EXIT_USAGE"
 fi
 
 ############################################################
@@ -30,8 +47,8 @@ fi
 ############################################################
 
 if [ ! -f "$CONFIG" ]; then
-echo "[ERROR] Config file not found: $CONFIG"
-exit 1
+warn "Config file not found: $CONFIG"
+exit "$EXIT_CONFIG"
 fi
 
 ############################################################
@@ -39,9 +56,9 @@ fi
 ############################################################
 
 if [ ! -f "$TEMPLATE" ]; then
-echo "[ERROR] Vhost template not found:"
+error "Vhost template not found:"
 echo "$TEMPLATE"
-exit 1
+exit "$EXIT_CONFIG"
 fi
 
 ############################################################
@@ -67,8 +84,8 @@ subdomain=$(get_config subdomain)
 sshuser=$(get_config sshuser)
 
 if [ -z "$subdomain" ] || [ -z "$sshuser" ]; then
-echo "[ERROR] subdomain or sshuser missing in config"
-exit 1
+error "subdomain or sshuser missing in config"
+exit "$EXIT_CONFIG"
 fi
 
 ############################################################
@@ -76,9 +93,9 @@ fi
 ############################################################
 
 if ! id "$sshuser" >/dev/null 2>&1; then
-echo "[ERROR] SSH user '$sshuser' not found"
+error "SSH user '$sshuser' not found"
 echo "Please run create-accounts.sh first"
-exit 1
+exit "$EXIT_RUNTIME"
 fi
 
 ############################################################
@@ -90,20 +107,25 @@ WEBROOT="$WEBROOT_BASE/$subdomain"
 HTMLDIR="$WEBROOT/html"
 
 ############################################################
-# CHECK IF VHOST ALREADY EXISTS
+# ENSURE VHOST FILE
 ############################################################
 
 if [ -f "$VHOST_FILE" ]; then
-echo "[WARN] VirtualHost already exists:"
+warn "VirtualHost already exists:"
 echo "$VHOST_FILE"
-exit 0
+info "Keeping existing VirtualHost file"
+else
+info "Generating VirtualHost configuration"
+info "Creating VHOST:"
+echo "$VHOST_FILE"
+sed "s/___DOMAIN___/$subdomain/g" "$TEMPLATE" > "$VHOST_FILE"
 fi
 
 ############################################################
-# CREATE WEB DIRECTORY
+# ENSURE WEB DIRECTORY
 ############################################################
 
-echo "[INFO] Creating web directory"
+info "Creating web directory"
 
 mkdir -p "$HTMLDIR"
 
@@ -136,47 +158,36 @@ EOF
 fi
 
 ############################################################
-# GENERATE VHOST FROM TEMPLATE
-############################################################
-
-echo "[INFO] Generating VirtualHost configuration"
-
-echo "[INFO] Creating VHOST:"
-echo "$VHOST_FILE"
-
-sed "s/___DOMAIN___/$subdomain/g" "$TEMPLATE" > "$VHOST_FILE"
-
-############################################################
 # ENABLE SITE
 ############################################################
 
-echo "[INFO] Enabling site"
+info "Enabling site"
 
 if [ ! -f "$APACHE_ENABLED/$subdomain.conf" ]; then
-sudo a2ensite "$subdomain.conf" >/dev/null
+a2ensite "$subdomain.conf" >/dev/null
 else
-echo "[WARN] Site already enabled"
+warn "Site already enabled"
 fi
 
 ############################################################
 # APACHE CONFIG TEST
 ############################################################
 
-echo "[INFO] Testing Apache configuration"
+info "Testing Apache configuration"
 
 apache2ctl configtest >/var/log/apache-test.log 2>&1
 
 if [ $? -ne 0 ]; then
 
-echo "[ERROR] Apache configuration invalid"
+error "Apache configuration invalid"
 cat /var/log/apache-test.log
 
-echo "[INFO] Rolling back..."
+info "Rolling back..."
 
 a2dissite "$subdomain.conf" >/dev/null 2>&1
 rm -f "$VHOST_FILE"
 
-exit 1
+exit "$EXIT_RUNTIME"
 
 fi
 
@@ -184,7 +195,7 @@ fi
 # RELOAD APACHE
 ############################################################
 
-echo "[INFO] Reloading Apache"
+info "Reloading Apache"
 
 systemctl reload apache2
 
@@ -201,4 +212,4 @@ echo "Domain  : $subdomain"
 echo "Webroot : $HTMLDIR"
 echo "Owner   : $sshuser"
 echo ""
-
+exit "$EXIT_OK"

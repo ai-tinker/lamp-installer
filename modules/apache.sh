@@ -1,11 +1,10 @@
 install_apache() {
 
 if dpkg -l | grep -q apache2; then
-warn "Apache already installed"
-return
-fi
-
+warn "Apache already installed, ensuring required packages and service state"
+else
 info "Installing Apache"
+fi
 
 apt-get install -y apache2 apache2-utils >> "$LOGFILE"
 

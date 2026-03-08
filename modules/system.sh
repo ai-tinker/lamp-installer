@@ -1,3 +1,8 @@
+EXIT_OK=0
+EXIT_RUNTIME=1
+EXIT_USAGE=2
+EXIT_CONFIG=3
+
 log() {
 echo "$(date '+%F %T') $1" | tee -a "$LOGFILE"
 }
@@ -10,7 +15,7 @@ check_root() {
 
 if [ "$EUID" -ne 0 ]; then
 error "Run as root"
-exit 1
+exit "$EXIT_USAGE"
 fi
 
 }

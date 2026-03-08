@@ -1,11 +1,10 @@
 install_php() {
 
 if dpkg -l | grep -q php-cli; then
-warn "PHP already installed"
-return
-fi
-
+warn "PHP already installed, ensuring required PHP packages"
+else
 info "Installing PHP"
+fi
 
 apt-get install -y \
 php \

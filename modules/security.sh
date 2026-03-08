@@ -3,10 +3,8 @@ apache_security() {
 CONF="/etc/apache2/conf-available/security-hardening.conf"
 
 if [ -f "$CONF" ]; then
-warn "Security config exists"
-return
-fi
-
+warn "Security config exists, ensuring Apache conf is enabled"
+else
 info "Applying Apache security hardening"
 
 cat <<EOF > "$CONF"
@@ -23,8 +21,8 @@ Header always set X-XSS-Protection "1; mode=block"
 </IfModule>
 
 EOF
+fi
 
 a2enconf security-hardening >> "$LOGFILE"
 
 }
-
