@@ -236,6 +236,30 @@ fi
 }
 
 ############################################################
+# PROMETHEUS NODE EXPORTER CHECK
+############################################################
+
+check_prometheus_node_exporter() {
+
+if dpkg -l | grep -q prometheus-node-exporter; then
+check "Node Exporter Package" OK "Installed"
+else
+check "Node Exporter Package" WARN "Not installed"
+fi
+
+if systemctl is-active --quiet prometheus-node-exporter; then
+check "Node Exporter Service" OK "Running"
+else
+check "Node Exporter Service" WARN "Not running"
+fi
+
+ss -tuln | grep -q ":9100 " \
+&& check "Node Exporter Port" OK "Listening" \
+|| check "Node Exporter Port" WARN "Closed"
+
+}
+
+############################################################
 # VHOST CHECK
 ############################################################
 
@@ -293,7 +317,7 @@ check_configs
 check_files
 check_ports
 check_firewall
+check_prometheus_node_exporter
 check_vhost
 
 print_score
-
