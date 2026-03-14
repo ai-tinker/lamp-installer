@@ -83,6 +83,43 @@ info "$LABEL disabled ($TOGGLE_KEY=$TOGGLE_VALUE)"
 fi
 }
 
+generate_password() {
+LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c 20
+}
+
+set_env_value() {
+KEY="$1"
+VALUE="$2"
+
+if grep -Eq "^[[:space:]]*$KEY[[:space:]]*=" "$ENV_FILE"; then
+sed -i "s|^[[:space:]]*$KEY[[:space:]]*=.*|$KEY=$VALUE|" "$ENV_FILE"
+else
+echo "$KEY=$VALUE" >> "$ENV_FILE"
+fi
+}
+
+prepare_env_file() {
+TEMPLATE_ENV="$BASE_DIR/.env-example"
+
+if [ -f "$ENV_FILE" ]; then
+info "Environment file already exists at $ENV_FILE, skipping creation"
+return
+fi
+
+if [ ! -f "$TEMPLATE_ENV" ]; then
+warn "Template file not found at $TEMPLATE_ENV, skipping .env creation"
+return
+fi
+
+cp "$TEMPLATE_ENV" "$ENV_FILE"
+
+set_env_value sshpwd "$(generate_password)"
+set_env_value mypwd "$(generate_password)"
+set_env_value myrootpwd "$(generate_password)"
+
+info "Environment file created at $ENV_FILE"
+}
+
 main() {
 
 clear
@@ -117,6 +154,7 @@ run_module_if_enabled ENABLE_REMOTEIP "$ENABLE_REMOTEIP" "RemoteIP configuration
 run_module_if_enabled ENABLE_APACHE_SECURITY "$ENABLE_APACHE_SECURITY" "Apache security hardening" apache_security
 
 restart_services
+prepare_env_file
 summary
 
 }
