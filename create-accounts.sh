@@ -1,11 +1,8 @@
 #!/bin/bash
 
-# 20260308, root password mysql BELUM BERHASIL DI-SET
-# Gunakan akun myuser sebagai superadmin
-
 ############################################################
-# ACCOUNT CREATOR
-# Read configuration from /tmp/data.txt
+# ACCOUNT CREATOR + MYSQL PROVISIONER
+# Robust / Idempotent Version
 ############################################################
 
 EXIT_OK=0
@@ -18,30 +15,34 @@ warn() { echo "[WARN] $1"; }
 error() { echo "[ERROR] $1"; }
 ok() { echo "[OK] $1"; }
 
+############################################################
+# LOAD GLOBAL CONFIG
+############################################################
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GLOBAL_CONFIG="$SCRIPT_DIR/files/config.conf"
 
 if [ ! -f "$GLOBAL_CONFIG" ]; then
-error "Global config not found: $GLOBAL_CONFIG"
-exit "$EXIT_CONFIG"
+    error "Global config not found: $GLOBAL_CONFIG"
+    exit "$EXIT_CONFIG"
 fi
 
 source "$GLOBAL_CONFIG"
 
+if [ ! -f "$CONFIG" ]; then
+    error "Config file not found: $CONFIG"
+    exit "$EXIT_CONFIG"
+fi
+
 ############################################################
-# CHECK ROOT PRIVILEGE
+# ROOT CHECK
 ############################################################
 
 if [ "$EUID" -ne 0 ]; then
-error "Script must be run with sudo or root"
-echo "Example:"
-echo "sudo ./create-vhost.sh"
-exit "$EXIT_USAGE"
-fi
-
-if [ ! -f "$CONFIG" ]; then
-warn "Config file not found: $CONFIG"
-exit "$EXIT_CONFIG"
+    error "Script must be run with sudo or root"
+    echo "Example:"
+    echo "sudo ./create-vhost.sh"
+    exit "$EXIT_USAGE"
 fi
 
 ############################################################
@@ -68,9 +69,11 @@ sshpwd=$(get_config sshpwd)
 
 myuser=$(get_config myuser)
 myppwd=$(get_config myppwd)
+
 if [ -z "$myppwd" ]; then
-myppwd=$(get_config mypwd)
+    myppwd=$(get_config mypwd)
 fi
+
 myrootuser=$(get_config myrootuser)
 myrootpwd=$(get_config myrootpwd)
 
@@ -79,18 +82,18 @@ myrootpwd=$(get_config myrootpwd)
 ############################################################
 
 if [ -z "$sshuser" ] || [ -z "$sshpwd" ]; then
-error "sshuser or sshpwd not defined"
-exit "$EXIT_CONFIG"
+    error "sshuser or sshpwd not defined in config"
+    exit "$EXIT_CONFIG"
 fi
 
 if [ -z "$myrootuser" ] || [ -z "$myrootpwd" ]; then
-error "myrootuser or myrootpwd not defined"
-exit "$EXIT_CONFIG"
+    error "myrootuser or myrootpwd not defined in config"
+    exit "$EXIT_CONFIG"
 fi
 
 if [ -z "$myuser" ] || [ -z "$myppwd" ]; then
-error "myuser or myppwd not defined"
-exit "$EXIT_CONFIG"
+    error "myuser or myppwd not defined in config"
+    exit "$EXIT_CONFIG"
 fi
 
 ############################################################
@@ -108,83 +111,109 @@ echo "MYSQL USER: $myuser"
 echo ""
 
 ############################################################
-# CREATE/UPDATE SSH USER
+# SSH USER SETUP
 ############################################################
 
 info "Ensuring SSH user..."
 
 if id "$sshuser" >/dev/null 2>&1; then
-warn "SSH user '$sshuser' already exists. Updating group membership and password."
+    warn "SSH user '$sshuser' already exists"
 else
-info "Creating SSH user..."
-useradd -m -s /bin/bash "$sshuser"
-ok "SSH user created"
+    info "Creating SSH user..."
+    useradd -m -s /bin/bash "$sshuser"
+    ok "SSH user created"
 fi
 
 echo "$sshuser:$sshpwd" | chpasswd
 usermod -aG sudo "$sshuser"
-ok "SSH user ensured with sudo group and configured password"
+
+ok "SSH user ensured"
 
 ############################################################
-# MYSQL HELPER
+# MYSQL FUNCTIONS
+############################################################
+
+mysql_exec_root() {
+
+mysql -uroot -p"$myrootpwd" -e "$1" >/dev/null 2>&1
+
+}
+
+mysql_exec_socket() {
+
+mysql -uroot -e "$1" >/dev/null 2>&1
+
+}
+
+############################################################
+# MYSQL ROOT CONFIGURATION
 ############################################################
 
 echo ""
-info "Ensuring MySQL account state..."
+info "Configuring MySQL root authentication..."
 
-mysql_exec() {
-QUERY="$1"
+MYSQL_SOCKET_LOGIN=false
+MYSQL_PASSWORD_LOGIN=false
 
-mysql -u"$myrootuser" -p"$myrootpwd" -e "$QUERY" >/dev/null 2>&1 && return 0
+if mysql_exec_socket "SELECT 1"; then
+    MYSQL_SOCKET_LOGIN=true
+fi
 
-return 1
-}
-
-if [ "$myrootuser" != "root" ]; then
-error "myrootuser must be 'root' for this script"
-exit "$EXIT_CONFIG"
+if mysql_exec_root "SELECT 1"; then
+    MYSQL_PASSWORD_LOGIN=true
 fi
 
 ############################################################
-# ROOT PASSWORD POLICY
+# CASE 1: ROOT VIA SOCKET
 ############################################################
 
-if mysql -uroot -e "SELECT 1;" >/dev/null 2>&1; then
-info "Fresh install detected: root has no password, applying myrootpwd"
-mysql -uroot -e "ALTER USER '$myrootuser'@'localhost' IDENTIFIED BY '$myrootpwd'; FLUSH PRIVILEGES;" >/dev/null 2>&1 || {
-error "Failed to set MySQL root password on fresh install. MySQL provisioning aborted."
-exit "$EXIT_RUNTIME"
-}
-ok "MySQL root password configured"
+if [ "$MYSQL_SOCKET_LOGIN" = true ]; then
+
+    info "Root login via auth_socket detected"
+    info "Setting root password and switching to mysql_native_password"
+
+    mysql -uroot <<SQL >/dev/null 2>&1
+ALTER USER '$myrootuser'@'localhost'
+IDENTIFIED WITH mysql_native_password
+BY '$myrootpwd';
+FLUSH PRIVILEGES;
+SQL
+
+fi
+
+############################################################
+# VERIFY ROOT PASSWORD
+############################################################
+
+if mysql_exec_root "SELECT 1"; then
+    ok "MySQL root password verified"
 else
-info "MySQL root password already set. Skipping root password change."
-mysql_exec "SELECT 1;" || {
-error "Cannot authenticate with myrootuser/myrootpwd. MySQL provisioning aborted."
-exit "$EXIT_RUNTIME"
-}
-ok "MySQL root credentials verified"
+    error "Cannot authenticate with configured MySQL root password"
+    exit "$EXIT_RUNTIME"
 fi
 
 ############################################################
-# CREATE/UPDATE MYSQL USER
+# CREATE / UPDATE MYSQL USER
 ############################################################
 
 info "Ensuring MySQL user '$myuser'"
 
-mysql_exec "CREATE USER IF NOT EXISTS '$myuser'@'localhost' IDENTIFIED BY '$myppwd';" || {
-error "Unable to authenticate as MySQL root to create/update '$myuser'"
-exit "$EXIT_RUNTIME"
-}
+mysql_exec_root "
+CREATE USER IF NOT EXISTS '$myuser'@'localhost'
+IDENTIFIED BY '$myppwd';
+"
 
-mysql_exec "ALTER USER '$myuser'@'localhost' IDENTIFIED BY '$myppwd';" || {
-error "Unable to set password for MySQL user '$myuser'"
-exit "$EXIT_RUNTIME"
-}
+mysql_exec_root "
+ALTER USER '$myuser'@'localhost'
+IDENTIFIED BY '$myppwd';
+"
 
-mysql_exec "GRANT ALL PRIVILEGES ON *.* TO '$myuser'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;" || {
-error "Unable to grant privileges for MySQL user '$myuser'"
-exit "$EXIT_RUNTIME"
-}
+mysql_exec_root "
+GRANT ALL PRIVILEGES ON *.* TO '$myuser'@'localhost'
+WITH GRANT OPTION;
+"
+
+mysql_exec_root "FLUSH PRIVILEGES;"
 
 ok "MySQL user ensured"
 
@@ -195,3 +224,4 @@ echo "======================================"
 echo "Completed"
 echo "======================================"
 echo ""
+
