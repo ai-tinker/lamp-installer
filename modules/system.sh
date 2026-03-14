@@ -29,11 +29,19 @@ apt-get update -y >> "$LOGFILE"
 
 restart_services() {
 
+if systemctl list-unit-files | grep -q '^apache2\.service'; then
 info "Restarting Apache"
-systemctl restart apache2
+systemctl restart apache2 || warn "Failed to restart Apache"
+else
+warn "Apache service not installed, skipping restart"
+fi
 
+if systemctl list-unit-files | grep -q '^mysql\.service'; then
 info "Restarting MySQL"
-systemctl restart mysql
+systemctl restart mysql || warn "Failed to restart MySQL"
+else
+warn "MySQL service not installed, skipping restart"
+fi
 
 }
 
