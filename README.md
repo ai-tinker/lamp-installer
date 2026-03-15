@@ -21,3 +21,5 @@ ENABLE_WAZUH_AGENT = false
 
 Nilai yang didukung: `true/false`, `1/0`, `yes/no`, `on/off` (case-insensitive).
 
+Tambahan:
+ClamAv
